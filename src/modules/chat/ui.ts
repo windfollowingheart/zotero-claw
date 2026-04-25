@@ -20,6 +20,7 @@ import type {
 } from "./types";
 import { chatAPI } from "./api";
 import { renderMarkdown } from "./renderer";
+import { getPort } from "../../utils/utils";
 
 /**
  * Generate unique ID using UUID (first 8 characters)
@@ -1461,10 +1462,18 @@ export class ChatUIFactory {
   }
 
   /**
-   * Connect to WebSocket at localhost:8005/ws (auto-connect)
+   * Connect to WebSocket (auto-connect)
+   * Port is obtained from config file via getPort()
    */
-  private connectWebSocket(): void {
-    const wsUrl = "ws://localhost:8005/ws";
+  private async connectWebSocket(): Promise<void> {
+    // Get port from config
+    const port = await getPort();
+    if (port === null) {
+      this.updateConnectionStatus("disconnected");
+      return;
+    }
+
+    const wsUrl = `ws://localhost:${port}/ws`;
 
     if (addon.api.websocket) {
       ztoolkit.log("WebSocket already connected");
@@ -1483,8 +1492,7 @@ export class ChatUIFactory {
         new ztoolkit.ProgressWindow(addon.data.config.addonName)
           .createLine({
             type: "success",
-            text: "✅ WebSocket connected",
-            progress: 100,
+            text: "WebSocket connected",
           })
           .show(2000);
         // Request history on first connection
