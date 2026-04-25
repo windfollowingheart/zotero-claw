@@ -27,6 +27,12 @@
 - **Connection Status**: Visual indicator for WebSocket connection state
 - **History Loading**: Load and review previous chat history
 
+# Support
+
+- **Windows**: Supported
+- **macOS**: Not Support Currently
+- **Linux**: Not Support Currently
+
 # How to Use
 
 ## Download XPI File
