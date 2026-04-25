@@ -859,6 +859,7 @@ export class ChatUIFactory {
         role: msg.role,
         content: msg.content,
         reasoning_content: msg.reasoning_content,
+        files: msg.files,
       });
 
       // Render based on role
@@ -868,6 +869,7 @@ export class ChatUIFactory {
           session_id: sessionId,
           role: "user",
           content: msg.content,
+          files: msg.files,
         });
       } else if (msg.role === "assistant") {
         // Render thinking if reasoning_content exists
@@ -923,7 +925,6 @@ export class ChatUIFactory {
       const contentEl = element.querySelector(".chat-agent-content");
       if (contentEl) {
         contentEl.innerHTML = renderMarkdown(message.content);
-        // contentEl.textContent = renderMarkdown(message.content);
       }
     }
 
@@ -1385,6 +1386,7 @@ export class ChatUIFactory {
           role: msg.role,
           content: msg.content || "",
           reasoning_content: msg.reasoning_content || "",
+          files: msg.files,
         };
         this.state.currentSession.messages.push(storedMsg);
       }
@@ -1436,8 +1438,7 @@ export class ChatUIFactory {
             ".chat-agent-content",
           );
           if (contentEl) {
-            // contentEl.innerHTML = renderMarkdown(storedMsg.content);
-            contentEl.textContent = storedMsg.content;
+            contentEl.innerHTML = renderMarkdown(storedMsg.content);
           }
         } else {
           // Create new content message with accumulated content
@@ -1478,7 +1479,7 @@ export class ChatUIFactory {
   }
 
   /**
-   * Render user message from backend
+   * Render user message from backend (including files display)
    */
   private renderUserMessageFromBackend(
     doc: Document,
@@ -1488,6 +1489,27 @@ export class ChatUIFactory {
       classList: ["chat-message", "chat-message-user"],
     });
     messageContainer.dataset.messageId = msg.id;
+
+    // Display files if present (show file names only)
+    if (msg.files && msg.files.length > 0) {
+      const filesDiv = createElement(doc, "div", {
+        classList: ["chat-attachments"],
+      });
+
+      for (const file of msg.files) {
+        const fileEl = createElement(doc, "div", {
+          classList: ["chat-attachment-item"],
+        });
+
+        const nameEl = createElement(doc, "span");
+        nameEl.innerHTML = `&#128196; ${file.name}`;
+
+        fileEl.appendChild(nameEl);
+        filesDiv.appendChild(fileEl);
+      }
+
+      messageContainer.appendChild(filesDiv);
+    }
 
     const contentEl = createElement(doc, "div", {
       classList: ["chat-message-content", "chat-user-content"],
@@ -1590,9 +1612,8 @@ export class ChatUIFactory {
 
     const contentEl = createElement(doc, "div", {
       classList: ["chat-message-content", "chat-agent-content"],
-      // innerHTML: renderMarkdown(content),
+      innerHTML: renderMarkdown(content),
     });
-    contentEl.textContent = content;
     messageContainer.appendChild(contentEl);
 
     // Copy button

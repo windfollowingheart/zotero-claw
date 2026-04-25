@@ -52,6 +52,7 @@ export interface WSChatMessage {
   content: string;
   reasoning_content?: string | null;
   finish?: boolean;  // True indicates response is complete
+  files?: BackendFile[];
 }
 
 /**
@@ -72,6 +73,16 @@ export interface BackendMessage {
   role: MessageRole;
   content: string;
   reasoning_content?: string | null;
+  files?: BackendFile[];
+}
+
+/**
+ * Backend file structure - file info from backend
+ */
+export interface BackendFile {
+  name: string;
+  path?: string;
+  content?: string | null;
 }
 
 /**
@@ -102,6 +113,7 @@ export interface StoredMessage {
   role: MessageRole;
   content: string;
   reasoning_content?: string | null;
+  files?: BackendFile[];
 }
 
 /**
