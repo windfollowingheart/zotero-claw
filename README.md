@@ -1,5 +1,5 @@
 <div align="center">
-  <!-- <img src="asserts/zotero-claw.png" width="50%" /> -->
+  <img src="asserts/zotero-claw.png" width="50%" />
 
 # ZoteroClaw
 
