@@ -40,6 +40,7 @@
 Download the latest `.xpi` file from the [Releases](https://github.com/windfollowingheart/zotero-claw/releases) page and install it in Zotero.
 
 [github](https://github.com/windfollowingheart/zotero-claw/releases/download/v1.0.0/zotero-claw.xpi)
+
 [gitee](https://gitee.com/windheartyolo/zotero-claw/releases/download/v1.0.0/zotero-claw.xpi)
 
 ## Download Backend Binary File
