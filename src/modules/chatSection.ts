@@ -81,21 +81,21 @@ export class ChatSectionFactory {
       onRender: (params) => {},
 
       sectionButtons: [
-        {
-          type: "refresh",
-          icon: "chrome://zotero/skin/16/universal/refresh.svg",
-          l10nID: "zoteroclaw-chat-section-refresh-tooltip",
-          onClick: (params) => {
-            const { body } = params;
-            const doc = body.ownerDocument as Document;
-            ChatSectionFactory.chatUI?.setCurrentDoc(doc);
-            // Refresh history for current session
-            ChatSectionFactory.chatUI?.requestHistory(
-              ChatSectionFactory.chatUI?.getState().currentSession
-                ?.session_id || "",
-            );
-          },
-        },
+        // {
+        //   type: "refresh",
+        //   icon: "chrome://zotero/skin/16/universal/refresh.svg",
+        //   l10nID: "zoteroclaw-chat-section-refresh-tooltip",
+        //   onClick: (params) => {
+        //     const { body } = params;
+        //     const doc = body.ownerDocument as Document;
+        //     ChatSectionFactory.chatUI?.setCurrentDoc(doc);
+        //     // Refresh history for current session
+        //     ChatSectionFactory.chatUI?.requestHistory(
+        //       ChatSectionFactory.chatUI?.getState().currentSession
+        //         ?.session_id || "",
+        //     );
+        //   },
+        // },
       ],
     });
   }

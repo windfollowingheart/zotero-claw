@@ -199,8 +199,18 @@ export class ChatUIFactory {
     });
     connectBtn.addEventListener("click", () => this.handleConnectClick(doc));
 
+    const loadHistoryBtn = createElement(doc, "button", {
+      id: "chat-load-history-btn",
+      classList: ["chat-connect-btn"],
+      textContent: "Load History",
+    });
+    loadHistoryBtn.addEventListener("click", () =>
+      this.handleLoadHistoryClick(doc),
+    );
+
     statusBar.appendChild(statusIndicator);
     statusBar.appendChild(connectBtn);
+    statusBar.appendChild(loadHistoryBtn);
 
     // Messages container
     const messagesContainer = createElement(doc, "div", {
@@ -707,6 +717,22 @@ export class ChatUIFactory {
       return;
     }
 
+    // Check WebSocket connection before doing anything
+    if (
+      !addon.api.websocket ||
+      addon.api.websocket.readyState !== WebSocket.OPEN
+    ) {
+      ztoolkit.log("WebSocket not connected, cannot send message");
+      new ztoolkit.ProgressWindow(addon.data.config.addonName)
+        .createLine({
+          text: "❌ WebSocket not connected",
+          type: "error",
+          progress: 100,
+        })
+        .show(2000);
+      return;
+    }
+
     // Create user message
     const userMessage: UserMessage = {
       session_id: getOrCreateSessionId(),
@@ -715,7 +741,9 @@ export class ChatUIFactory {
         this.state.attachments.length > 0 ? this.state.attachments : undefined,
     };
 
-    // Clear input and attachments
+    // Clear input and attachments (save for restore on error)
+    const savedInput = query;
+    const savedAttachments = [...this.state.attachments];
     textarea.value = "";
     textarea.style.height = "auto";
     this.state.inputValue = "";
@@ -746,14 +774,43 @@ export class ChatUIFactory {
     this.state.isSending = true;
     this.updateSendButtonState(doc, true);
 
-    // Send to agent via WebSocket
-    this.sendWebSocketMessage(userMessage);
+    // Send to agent via WebSocket (with error handling)
+    const sendSuccess = this.sendWebSocketMessage(userMessage);
+    if (!sendSuccess) {
+      // Restore input and attachments on failure
+      textarea.value = savedInput;
+      this.state.inputValue = savedInput;
+      this.state.attachments = savedAttachments;
+      this.updateAttachmentsDisplay(doc);
+
+      // Remove message from session
+      if (this.state.currentSession) {
+        this.state.currentSession.messages =
+          this.state.currentSession.messages.filter(
+            (m) => m.id !== messageState.id,
+          );
+      }
+
+      // Remove message from UI
+      const messagesContainer = doc.getElementById("chat-messages");
+      const msgElement = messagesContainer?.querySelector(
+        `[data-message-id="${messageState.id}"]`,
+      );
+      if (msgElement) {
+        msgElement.remove();
+      }
+
+      // Reset sending state
+      this.state.isSending = false;
+      this.updateSendButtonState(doc, false);
+    }
   }
 
   /**
    * Send message via WebSocket (includes file attachments)
+   * Returns true if sent successfully, false otherwise
    */
-  private sendWebSocketMessage(userMessage: UserMessage): void {
+  private sendWebSocketMessage(userMessage: UserMessage): boolean {
     if (
       !addon.api.websocket ||
       addon.api.websocket.readyState !== WebSocket.OPEN
@@ -761,35 +818,41 @@ export class ChatUIFactory {
       ztoolkit.log("WebSocket not connected, cannot send message");
       new ztoolkit.ProgressWindow(addon.data.config.addonName)
         .createLine({
-          text: "❌ WebSocket not connected!",
-          type: "fail",
+          text: "❌ WebSocket not connected",
+          type: "error",
           progress: 100,
         })
         .show(2000);
-      // Reset sending state
-      this.state.isSending = false;
-      const doc = this.currentDoc;
-      if (doc) {
-        this.updateSendButtonState(doc, false);
-      }
-      return;
+      return false;
     }
 
-    // Build request with attachments (only file paths)
-    const request: WSRequest = {
-      type: "chat",
-      session_id: userMessage.session_id,
-      message: userMessage.user_query,
-      attachments: userMessage.attachments?.map((att) => ({
-        name: att.name,
-        type: att.type,
-        size: att.size,
-        path: att.path,
-      })),
-    };
+    try {
+      // Build request with attachments (only file paths)
+      const request: WSRequest = {
+        type: "chat",
+        session_id: userMessage.session_id,
+        message: userMessage.user_query,
+        attachments: userMessage.attachments?.map((att) => ({
+          name: att.name,
+          type: att.type,
+          size: att.size,
+          path: att.path,
+        })),
+      };
 
-    addon.api.websocket.send(JSON.stringify(request));
-    ztoolkit.log("Sent chat request via WebSocket:", request);
+      addon.api.websocket.send(JSON.stringify(request));
+      ztoolkit.log("Sent chat request via WebSocket:", request);
+      return true;
+    } catch (error) {
+      ztoolkit.log("Failed to send WebSocket message:", error);
+      new ztoolkit.ProgressWindow(addon.data.config.addonName)
+        .createLine({
+          text: "Failed to send message",
+          type: "fail",
+        })
+        .show(2000);
+      return false;
+    }
   }
 
   /**
@@ -966,6 +1029,15 @@ export class ChatUIFactory {
     }
 
     ztoolkit.log("History messages loaded", sessionId, messages.length);
+
+    // Show success notification
+    new ztoolkit.ProgressWindow(addon.data.config.addonName)
+      .createLine({
+        type: "success",
+        text: `✅  Loaded ${messages.length} messages`,
+        progress: 100,
+      })
+      .show();
   }
 
   /**
@@ -1354,15 +1426,29 @@ export class ChatUIFactory {
    * Handle connect button click
    */
   private handleConnectClick(doc: Document): void {
-    if (addon.api.websocket && addon.api.websocket.readyState === WebSocket.OPEN) {
+    if (
+      addon.api.websocket &&
+      addon.api.websocket.readyState === WebSocket.OPEN
+    ) {
       // Already connected, disconnect
       addon.api.websocket.close();
       addon.api.websocket = null;
       this.updateConnectionStatus("disconnected");
     } else {
-      // Not connected, try to connect
-      this.connectWebSocket();
+      // Not connected, wait 1s before reconnecting to avoid rapid reconnection
+      this.updateConnectionStatus("connecting");
+      setTimeout(() => {
+        this.connectWebSocket();
+      }, 1000);
     }
+  }
+
+  /**
+   * Handle load history button click
+   */
+  private handleLoadHistoryClick(doc: Document): void {
+    const sessionId = getOrCreateSessionId();
+    this.requestHistory(sessionId);
   }
 
   /**
@@ -1391,6 +1477,9 @@ export class ChatUIFactory {
             text: "WebSocket connected",
           })
           .show();
+        // Request history on first connection
+        const sessionId = getOrCreateSessionId();
+        this.requestHistory(sessionId);
       });
 
       addon.api.websocket.addEventListener(
@@ -1439,10 +1528,11 @@ export class ChatUIFactory {
         this.updateConnectionStatus("disconnected");
         new ztoolkit.ProgressWindow(addon.data.config.addonName)
           .createLine({
-            type: "fail",
-            text: "WebSocket connection failed",
+            type: "error",
+            text: "❌ WebSocket connection failed",
+            progress: 100,
           })
-          .show();
+          .show(2000);
       });
 
       addon.api.websocket.addEventListener("close", () => {
@@ -1451,20 +1541,22 @@ export class ChatUIFactory {
         this.updateConnectionStatus("disconnected");
         new ztoolkit.ProgressWindow(addon.data.config.addonName)
           .createLine({
-            type: "fail",
-            text: "WebSocket disconnected",
+            type: "error",
+            text: "❌ WebSocket disconnected",
+            progress: 100,
           })
-          .show();
+          .show(2000);
       });
     } catch (error) {
       ztoolkit.log("Failed to connect WebSocket:", error);
       this.updateConnectionStatus("disconnected");
       new ztoolkit.ProgressWindow(addon.data.config.addonName)
         .createLine({
-          type: "fail",
-          text: "WebSocket connection failed",
+          type: "error",
+          text: "❌ WebSocket connection failed",
+          progress: 100,
         })
-        .show();
+        .show(2000);
     }
   }
 
@@ -1864,6 +1956,13 @@ export class ChatUIFactory {
       addon.api.websocket.readyState !== WebSocket.OPEN
     ) {
       ztoolkit.log("WebSocket not connected, cannot request history");
+      new ztoolkit.ProgressWindow(addon.data.config.addonName)
+        .createLine({
+          text: "❌ WebSocket not connected",
+          type: "error",
+          progress: 100,
+        })
+        .show(2000);
       return;
     }
 
@@ -1884,6 +1983,13 @@ export class ChatUIFactory {
       addon.api.websocket.readyState !== WebSocket.OPEN
     ) {
       ztoolkit.log("WebSocket not connected, cannot request sessions");
+      new ztoolkit.ProgressWindow(addon.data.config.addonName)
+        .createLine({
+          text: "❌ WebSocket not connected",
+          type: "error",
+          progress: 100,
+        })
+        .show(2000);
       return;
     }
 

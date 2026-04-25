@@ -5,22 +5,25 @@
 Always use `ztoolkit.ProgressWindow` for user notifications (success/failure messages) instead of simple logging.
 
 Example:
+
 ```typescript
 // Success notification
 new ztoolkit.ProgressWindow("ZoteroClaw")
   .createLine({
     type: "success",
-    text: "Operation completed",
+    text: "✅  Operation completed",
+    progress: 100,
   })
-  .show();
+  .show(2000);
 
 // Failure notification
 new ztoolkit.ProgressWindow("ZoteroClaw")
   .createLine({
-    type: "fail",
-    text: "Operation failed",
+    type: "error",
+    text: "❌  Operation failed",
+    progress: 100,
   })
-  .show();
+  .show(2000);
 ```
 
 ## Project Info
