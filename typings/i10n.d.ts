@@ -6,4 +6,5 @@ export type FluentMessageId =
   | 'pref-enable-copy-shortcut'
   | 'prefs-title'
   | 'zoteroclaw-chat-section-header'
+  | 'zoteroclaw-chat-section-refresh-tooltip'
   | 'zoteroclaw-chat-section-sidenav-tooltip';

@@ -24,7 +24,9 @@ class Addon {
   // Lifecycle hooks
   public hooks: typeof hooks;
   // APIs
-  public api: object;
+  public api: {
+    websocket?: WebSocket | null;
+  };
 
   constructor() {
     this.data = {

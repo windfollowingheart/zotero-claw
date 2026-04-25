@@ -7,9 +7,7 @@
 declare namespace _ZoteroTypes {
   interface Prefs {
     PluginPrefsMap: {
-      "llm.baseUrl": string;
-      "llm.apiKey": string;
-      "llm.model": string;
+      "session_id": string;
     };
   }
 }

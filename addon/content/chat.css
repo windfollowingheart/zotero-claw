@@ -53,11 +53,19 @@
   /* color: var(--material-text, #333333); */
 }
 
-/* Thinking and tool messages - lighter background and text */
+/* Thinking and tool messages - collapsible with lighter style */
 .chat-message-thinking,
 .chat-message-tool {
-  /* background: rgba(240, 240, 240, 0.5);
-  color: #666666; */
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+
+.chat-message-thinking .chat-collapsible-label {
+  color: #888;
+}
+
+.chat-message-tool .chat-collapsible-label {
+  color: #666;
 }
 
 /* Message content */
@@ -254,18 +262,23 @@
 
 .chat-upload-btn,
 .chat-send-btn,
-.chat-sessions-btn {
-  padding: 8px 12px;
+.chat-sessions-btn,
+.chat-reference-btn {
+  /* padding: 8px 12px; */
   /* background: var(--material-button-bg, #f0f0f0); */
   /* border: 1px solid var(--material-border, #e0e0e0); */
   border-radius: 4px;
   cursor: pointer;
   font-size: 1.1em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .chat-upload-btn:hover,
 .chat-send-btn:hover,
-.chat-sessions-btn:hover {
+.chat-sessions-btn:hover,
+.chat-reference-btn:hover {
   /* background: var(--material-button-hover, #d8d8d8); */
 }
 

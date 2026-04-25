@@ -1,9 +1,9 @@
 import { getString } from "../utils/locale";
-import { chatAPI } from "./chat/api";
 import { ChatUIFactory } from "./chat/ui";
 
 export class ChatSectionFactory {
-  private static chatUI: ChatUIFactory | null = new ChatUIFactory();
+  // Single global ChatUIFactory instance (stateless UI, renders on each item change)
+  private static chatUI: ChatUIFactory | null = null;
 
   static registerStyleSheet(win: _ZoteroTypes.MainWindow) {
     const doc = win.document;
@@ -29,6 +29,11 @@ export class ChatSectionFactory {
   }
 
   static async registerChatSection() {
+    // Initialize single ChatUIFactory instance
+    if (!this.chatUI) {
+      this.chatUI = new ChatUIFactory();
+    }
+
     Zotero.ItemPaneManager.registerSection({
       paneID: "zoteroclaw-chat-section",
       pluginID: addon.data.config.addonID,
@@ -40,27 +45,52 @@ export class ChatSectionFactory {
         l10nID: "zoteroclaw-chat-section-sidenav-tooltip",
         icon: `chrome://${addon.data.config.addonRef}/content/icons/favicon.svg`,
       },
-      // Optional
-      // bodyXHTML:
-      // '<html:h1 id="test">THIS IS TEST11</html:h1><browser disableglobalhistory="true" remote="true" maychangeremoteness="true" type="content" flex="1" id="browser" style="width: 180%; height: 280px"/>',
 
-      // Called when the section is asked to render, must be synchronous.
-      onRender: ({ body, item }) => {
-        // ztoolkit.log("Section rendered!", item?.id);
-        // const title = body.querySelector("#test") as HTMLElement;
-        // title.style.color = "red";
-        // title.textContent = "LOADING";
-        // setL10nArgs(`{ "status": "Loading" }`);
-        // setSectionSummary("loading!");
-        // setSectionButtonStatus("test", { hidden: true });
-        const chatPanel = this.chatUI?.createChatPanel(
-          body.ownerDocument as Document,
+      onItemChange(params) {
+        if (params.tabType !== "reader") {
+          return;
+        }
+        const { body, item } = params;
+        const doc = body.ownerDocument as Document;
+        const itemID = item.id;
+        console.log("onItemChange", itemID);
+        // Clear existing content in body
+        body.innerHTML = "";
+
+        // Re-render chat panel with new doc
+        const chatPanel = ChatSectionFactory.chatUI?.createChatPanel(
+          doc,
         ) as HTMLElement;
-        console.log(this.chatUI);
-        console.log(chatPanel);
-        console.log(body);
         body.appendChild(chatPanel);
+        ChatSectionFactory.chatUI?.setCurrentDoc(
+          chatPanel.ownerDocument as Document,
+        );
+        // Request history for current session
+        ChatSectionFactory.chatUI?.requestHistory(
+          ChatSectionFactory.chatUI?.getState().currentSession?.session_id ||
+            "",
+        );
       },
+
+      onRender: (params) => {},
+
+      sectionButtons: [
+        {
+          type: "refresh",
+          icon: "chrome://zotero/skin/16/universal/refresh.svg",
+          l10nID: "zoteroclaw-chat-section-refresh-tooltip",
+          onClick: (params) => {
+            const { body } = params;
+            const doc = body.ownerDocument as Document;
+            ChatSectionFactory.chatUI?.setCurrentDoc(doc);
+            // Refresh history for current session
+            ChatSectionFactory.chatUI?.requestHistory(
+              ChatSectionFactory.chatUI?.getState().currentSession
+                ?.session_id || "",
+            );
+          },
+        },
+      ],
     });
   }
 
@@ -74,7 +104,7 @@ export class ChatSectionFactory {
   }
 
   /**
-   * Get chat UI factory instance
+   * Get the global ChatUIFactory instance
    */
   static getChatUI(): ChatUIFactory | null {
     return this.chatUI;

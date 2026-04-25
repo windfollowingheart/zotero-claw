@@ -1,3 +1,1 @@
-pref("llm.baseUrl", "");
-pref("llm.apiKey", "");
-pref("llm.model", "");
+pref("session_id", "");

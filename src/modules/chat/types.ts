@@ -3,70 +3,78 @@
  */
 
 /**
- * Message types supported by the chat interface
+ * WebSocket request types - sent from client to backend
  */
-export type MessageType = "thinking" | "content" | "tool" | "user";
+export type WSRequestType = 'chat' | 'get_history' | 'get_sessions';
 
 /**
- * WebSocket message types - for communication with backend
+ * WebSocket response types - received from backend
  */
-export type WSMessageType =
-  | "chat"
-  | "get_history"
-  | "get_sessions"
-  | "chat_response"
-  | "history_response"
-  | "sessions_response"
-  | "streaming"
-  | "complete";
+export type WSResponseType = 'get_sessions_response' | 'get_history_response';
 
 /**
- * File attachment structure
+ * Message role types - from backend
+ */
+export type MessageRole = 'user' | 'assistant' | 'tool';
+
+/**
+ * UI message types - for rendering
+ */
+export type UIMessageType = 'user' | 'thinking' | 'content' | 'tool';
+
+/**
+ * File attachment structure - uses absolute file path
  */
 export interface FileAttachment {
   name: string;
   type: string;
   size: number;
-  data?: ArrayBuffer;
+  path: string;  // Absolute file path
 }
 
 /**
  * WebSocket request - sent from client to backend
  */
 export interface WSRequest {
-  type: WSMessageType;
+  type: WSRequestType;
   session_id?: string;
-  user_query?: string;
-  attachments?: FileAttachment[];
+  message?: string;  // For chat request
+}
+
+/**
+ * WebSocket chat message - received from backend during chat
+ */
+export interface WSChatMessage {
+  session_id: string;
+  id: string;
+  role: MessageRole;
+  content: string;
+  reasoning_content?: string | null;
+  finish?: boolean;  // True indicates response is complete
 }
 
 /**
  * WebSocket response - received from backend
  */
 export interface WSResponse {
-  type: WSMessageType;
-  session_id: string;
-  message_id?: string;
-  message_type?: MessageType;
-  content?: string;
-  is_complete?: boolean;
-  submessages?: WSResponse[];
-  messages?: HistoryMessage[]; // For history_response
-  sessions?: SessionInfo[]; // For sessions_response
+  type: WSResponseType;
+  session_id?: string;
+  session_ids?: string[];         // For get_sessions_response
+  messages?: BackendMessage[];    // For get_history_response
 }
 
 /**
- * Session info - for session list
+ * Backend message structure - received from backend
  */
-export interface SessionInfo {
-  session_id: string;
-  title?: string;
-  created_at?: string;
-  message_count?: number;
+export interface BackendMessage {
+  id: string;
+  role: MessageRole;
+  content: string;
+  reasoning_content?: string | null;
 }
 
 /**
- * User message structure - sent to agent
+ * User message structure - for internal use
  */
 export interface UserMessage {
   session_id: string;
@@ -75,67 +83,34 @@ export interface UserMessage {
 }
 
 /**
- * Agent message structure - received from agent callback (streaming)
- * Can contain submessages for multi-step responses
+ * Agent message structure - for UI rendering
  */
 export interface AgentMessage {
   message_id: string;
   session_id: string;
-  message_type: MessageType;
+  message_type: UIMessageType;
   content: string;
   is_complete: boolean;
-  submessages?: AgentMessage[];
 }
 
 /**
- * Stored agent message with accumulated content
- * Can contain submessages for multi-step responses
+ * Stored message - for session storage
  */
-export interface StoredAgentMessage {
-  message_id: string;
-  session_id: string;
-  message_type: MessageType;
+export interface StoredMessage {
+  id: string;
+  role: MessageRole;
   content: string;
-  is_complete: boolean;
-  submessages?: StoredAgentMessage[];
+  reasoning_content?: string | null;
 }
-
-/**
- * History user message - for loading from history
- */
-export interface HistoryUserMessage {
-  message_type: "user";
-  content: string;
-}
-
-/**
- * History agent message - for loading from history
- * Can contain submessages for multi-step responses
- */
-export interface HistoryAgentMessage {
-  message_type: "thinking" | "content" | "tool";
-  content: string;
-  submessages?: HistoryAgentMessage[];
-}
-
-/**
- * History message - union type
- */
-export type HistoryMessage = HistoryUserMessage | HistoryAgentMessage;
 
 /**
  * Chat session - contains all messages in a conversation
  */
 export interface ChatSession {
   session_id: string;
-  messages: (UserMessage | StoredAgentMessage)[];
+  messages: StoredMessage[];
   created_at: Date;
 }
-
-/**
- * Chat message - union of user and agent messages
- */
-export type ChatMessage = UserMessage | AgentMessage;
 
 /**
  * Message render state - for UI rendering

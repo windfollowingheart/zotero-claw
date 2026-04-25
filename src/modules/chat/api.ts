@@ -7,7 +7,7 @@
 
 import type {
   AgentMessage,
-  HistoryMessage,
+  BackendMessage,
 } from "./types";
 
 /**
@@ -28,7 +28,7 @@ export type ResponseCompleteCallback = (
  */
 export type HistoryMessagesCallback = (
   sessionId: string,
-  messages: HistoryMessage[],
+  messages: BackendMessage[],
 ) => void;
 
 /**
@@ -108,7 +108,7 @@ export class ChatAPI {
   /**
    * Call history messages callback (used by WebSocket handler)
    */
-  triggerHistoryMessages(sessionId: string, messages: HistoryMessage[]): void {
+  triggerHistoryMessages(sessionId: string, messages: BackendMessage[]): void {
     if (this.historyMessagesCallback) {
       this.historyMessagesCallback(sessionId, messages);
     }

@@ -6,22 +6,20 @@
 
 import type {
   AgentMessage,
-  ChatMessage,
+  BackendMessage,
   ChatSession,
   ChatUIState,
   FileAttachment,
-  HistoryAgentMessage,
-  HistoryMessage,
   MessageRenderState,
-  MessageType,
-  SessionInfo,
-  StoredAgentMessage,
+  StoredMessage,
+  UIMessageType,
   UserMessage,
+  WSChatMessage,
   WSRequest,
   WSResponse,
 } from "./types";
 import { chatAPI } from "./api";
-import { renderMarkdown, renderPlainText } from "./renderer";
+import { renderMarkdown } from "./renderer";
 
 /**
  * Generate unique ID using UUID (first 8 characters)
@@ -32,11 +30,23 @@ function generateId(): string {
 }
 
 /**
- * Generate session ID using UUID (first 8 characters)
+ * Get or create session ID from prefs
+ * If prefs has no session_id, generate one and save it
  */
-function generateSessionId(): string {
-  const uuid = crypto.randomUUID();
-  return `session-${uuid.substring(0, 8)}`;
+function getOrCreateSessionId(): string {
+  const prefsKey = "extensions.zoteroclaw.chat.session_id";
+  let sessionId = Zotero.Prefs.get(prefsKey) as string;
+
+  if (!sessionId || sessionId.trim() === "") {
+    // Generate new session ID
+    const uuid = crypto.randomUUID();
+    sessionId = uuid.substring(0, 8);
+    // Save to prefs
+    Zotero.Prefs.set(prefsKey, sessionId);
+    ztoolkit.log("Generated new session_id:", sessionId);
+  }
+
+  return sessionId;
 }
 
 /**
@@ -74,13 +84,15 @@ function createElement<K extends keyof HTMLElementTagNameMap>(
 
 /**
  * Chat UI Factory - creates chat UI elements
+ * Stateless UI - elements are recreated on each item change
+ * State data (messages, session) persists
  */
 export class ChatUIFactory {
   private state: ChatUIState;
   private messageStates: Map<string, MessageRenderState>;
   private messageElements: Map<string, HTMLElement>;
   private containerElement: HTMLElement | null = null;
-  private websocket: WebSocket | null = null;
+  private currentDoc: Document | null = null;
 
   constructor() {
     this.state = {
@@ -97,24 +109,53 @@ export class ChatUIFactory {
     // Initialize new session
     this.createNewSession();
 
-    // Register agent message callback
-    chatAPI.registerAgentMessageCallback(this.handleAgentMessage.bind(this));
+    // Register callbacks only once
+    this.registerCallbacks();
+  }
 
-    // Register response complete callback
+  /**
+   * Register API callbacks (only called once in constructor)
+   */
+  private registerCallbacks(): void {
+    chatAPI.registerAgentMessageCallback(this.handleAgentMessage.bind(this));
     chatAPI.registerResponseCompleteCallback(
       this.handleResponseComplete.bind(this),
     );
-
-    // Register history messages callback
     chatAPI.registerHistoryMessagesCallback(
       this.handleHistoryMessages.bind(this),
     );
   }
 
+  getState(): ChatUIState {
+    return this.state;
+  }
+
+  /**
+   * Get current document
+   */
+  getCurrentDoc(): Document | null {
+    return this.currentDoc;
+  }
+
+  /**
+   * Set current document
+   */
+  setCurrentDoc(doc: Document): void {
+    this.currentDoc = doc;
+  }
+
   /**
    * Create the main chat panel UI
+   * Called each time item changes - recreates all UI elements
    */
   createChatPanel(doc: Document): HTMLElement {
+    // Update current doc reference
+    this.currentDoc = doc;
+
+    // Clear message states and elements for fresh render
+    this.messageStates.clear();
+    this.messageElements.clear();
+
     const container = createElement(doc, "div", {
       id: "chat-container",
       classList: ["chat-container"],
@@ -137,19 +178,14 @@ export class ChatUIFactory {
     // Setup paste handler for file upload
     this.setupPasteHandler(doc);
 
-    // Connect WebSocket
+    // Connect WebSocket (only once, uses global addon.api.websocket)
     this.connectWebSocket();
-
-    setTimeout(() => {
-      this.requestSessions();
-      this.requestHistory("123");
-    }, 1000);
 
     return container;
   }
 
   /**
-   * Create input area with file upload and send button
+   * Create input area with file upload, reference, and send button
    */
   private createInputArea(doc: Document): HTMLElement {
     const inputArea = createElement(doc, "div", {
@@ -172,10 +208,21 @@ export class ChatUIFactory {
     const uploadBtn = createElement(doc, "button", {
       id: "chat-upload-btn",
       classList: ["chat-upload-btn"],
-      innerHTML: "&#128206;",
+      innerHTML: "&#128209;",
       properties: { title: "Upload file" },
     });
     uploadBtn.addEventListener("click", () => this.handleFileUploadClick(doc));
+
+    // Reference button - reference current item's PDF
+    const referenceBtn = createElement(doc, "button", {
+      id: "chat-reference-btn",
+      classList: ["chat-reference-btn"],
+      innerHTML: "&#128196;",
+      properties: { title: "Reference current PDF" },
+    });
+    referenceBtn.addEventListener("click", () =>
+      this.handleReferenceClick(doc),
+    );
 
     // Input textarea
     const textarea = createElement(doc, "textarea", {
@@ -198,6 +245,7 @@ export class ChatUIFactory {
     sendBtn.addEventListener("click", () => this.handleSendClick(doc));
 
     inputRow.appendChild(uploadBtn);
+    inputRow.appendChild(referenceBtn);
     inputRow.appendChild(textarea);
     inputRow.appendChild(sendBtn);
 
@@ -212,11 +260,11 @@ export class ChatUIFactory {
    */
   createMessageElement(
     doc: Document,
-    message: ChatMessage,
+    message: UserMessage | AgentMessage,
     messageState: MessageRenderState,
   ): HTMLElement {
     const isUser = "user_query" in message;
-    const messageType: MessageType = isUser ? "user" : message.message_type;
+    const messageType: UIMessageType = isUser ? "user" : message.message_type;
 
     const messageContainer = createElement(doc, "div", {
       classList: ["chat-message", `chat-message-${messageType}`],
@@ -286,8 +334,8 @@ export class ChatUIFactory {
     // Message content
     const contentEl = createElement(doc, "div", {
       classList: ["chat-message-content", "chat-user-content"],
-      innerHTML: renderPlainText(message.user_query),
     });
+    contentEl.textContent = message.user_query;
     container.appendChild(contentEl);
 
     // Copy button - hidden until all responses complete, copies original content
@@ -340,8 +388,8 @@ export class ChatUIFactory {
       // Content
       const content = createElement(doc, "div", {
         classList: ["chat-collapsible-content"],
-        innerHTML: renderPlainText(message.content),
       });
+      content.textContent = message.content;
       if (messageState.isCollapsed) {
         content.classList.add("collapsed");
       }
@@ -410,9 +458,9 @@ export class ChatUIFactory {
   private getOriginalContent(messageId: string): string {
     if (this.state.currentSession) {
       const msg = this.state.currentSession.messages.find(
-        (m) => "message_id" in m && m.message_id === messageId,
+        (m) => m.id === messageId,
       );
-      if (msg && "content" in msg) {
+      if (msg) {
         return msg.content;
       }
     }
@@ -428,6 +476,52 @@ export class ChatUIFactory {
 
     state.isCollapsed = !state.isCollapsed;
     this.updateCollapsibleUI(doc, messageId, state.isCollapsed);
+  }
+
+  /**
+   * Create copy button for thinking message - gets content dynamically from storedMsg
+   */
+  private createCopyButtonForThinking(
+    doc: Document,
+    messageId: string,
+  ): HTMLElement {
+    const btn = createElement(doc, "button", {
+      classList: ["chat-copy-btn"],
+      innerHTML: "&#128203; Copy",
+      properties: { title: "Copy to clipboard" },
+    });
+    btn.addEventListener("click", () => {
+      // Get reasoning_content from storedMsg dynamically
+      const storedMsg = this.state.currentSession?.messages.find(
+        (m) => m.id === messageId,
+      );
+      const content = storedMsg?.reasoning_content || "";
+      this.copyToClipboard(content);
+    });
+    return btn;
+  }
+
+  /**
+   * Create copy button for tool message - gets content dynamically from storedMsg
+   */
+  private createCopyButtonForTool(
+    doc: Document,
+    messageId: string,
+  ): HTMLElement {
+    const btn = createElement(doc, "button", {
+      classList: ["chat-copy-btn"],
+      innerHTML: "&#128203; Copy",
+      properties: { title: "Copy to clipboard" },
+    });
+    btn.addEventListener("click", () => {
+      // Get content from storedMsg dynamically
+      const storedMsg = this.state.currentSession?.messages.find(
+        (m) => m.id === messageId,
+      );
+      const content = storedMsg?.content || "";
+      this.copyToClipboard(content);
+    });
+    return btn;
   }
 
   /**
@@ -524,8 +618,6 @@ export class ChatUIFactory {
    * Validate input and send message
    */
   private sendMessage(doc: Document): void {
-    console.log("doc@@");
-
     const textarea = doc.getElementById("chat-input") as HTMLTextAreaElement;
     if (!textarea) return;
 
@@ -543,7 +635,7 @@ export class ChatUIFactory {
 
     // Create user message
     const userMessage: UserMessage = {
-      session_id: this.state.currentSession?.session_id || generateSessionId(),
+      session_id: getOrCreateSessionId(),
       user_query: query,
       attachments:
         this.state.attachments.length > 0 ? this.state.attachments : undefined,
@@ -556,11 +648,6 @@ export class ChatUIFactory {
     this.state.attachments = [];
     this.updateAttachmentsDisplay(doc);
 
-    // Add to session
-    if (this.state.currentSession) {
-      this.state.currentSession.messages.push(userMessage);
-    }
-
     // Create message state and element
     const messageState: MessageRenderState = {
       id: generateId(),
@@ -568,6 +655,15 @@ export class ChatUIFactory {
       isStreaming: false,
     };
     this.messageStates.set(messageState.id, messageState);
+
+    // Add to session as StoredMessage
+    if (this.state.currentSession) {
+      this.state.currentSession.messages.push({
+        id: messageState.id,
+        role: "user",
+        content: query,
+      });
+    }
 
     // Render user message
     this.appendUserMessage(doc, userMessage, messageState);
@@ -584,7 +680,10 @@ export class ChatUIFactory {
    * Send message via WebSocket
    */
   private sendWebSocketMessage(userMessage: UserMessage): void {
-    if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
+    if (
+      !addon.api.websocket ||
+      addon.api.websocket.readyState !== WebSocket.OPEN
+    ) {
       ztoolkit.log("WebSocket not connected, cannot send message");
       new ztoolkit.ProgressWindow(addon.data.config.addonName)
         .createLine({
@@ -595,7 +694,7 @@ export class ChatUIFactory {
         .show(2000);
       // Reset sending state
       this.state.isSending = false;
-      const doc = this.containerElement?.ownerDocument;
+      const doc = this.currentDoc;
       if (doc) {
         this.updateSendButtonState(doc, false);
       }
@@ -605,10 +704,9 @@ export class ChatUIFactory {
     const request: WSRequest = {
       type: "chat",
       session_id: userMessage.session_id,
-      user_query: userMessage.user_query,
-      attachments: userMessage.attachments,
+      message: userMessage.user_query,
     };
-    this.websocket.send(JSON.stringify(request));
+    addon.api.websocket.send(JSON.stringify(request));
     ztoolkit.log("Sent chat request via WebSocket:", request);
   }
 
@@ -628,7 +726,7 @@ export class ChatUIFactory {
    */
   private handleAgentMessage(message: AgentMessage): void {
     // Get the container document
-    const doc = this.containerElement?.ownerDocument;
+    const doc = this.currentDoc;
     if (!doc) {
       ztoolkit.log("No document available for rendering agent message");
       return;
@@ -654,23 +752,17 @@ export class ChatUIFactory {
         this.state.currentSession &&
         message.session_id === this.state.currentSession.session_id
       ) {
+        // Store as StoredMessage - use "assistant" role for thinking/content, "tool" for tool
+        const role = message.message_type === "tool" ? "tool" : "assistant";
         this.state.currentSession.messages.push({
-          message_id: messageId,
-          session_id: message.session_id,
-          message_type: message.message_type,
+          id: messageId,
+          role,
           content: message.content,
-          is_complete: message.is_complete,
         });
       }
 
       // Render agent message
       this.appendAgentMessage(doc, message, messageState);
-    }
-
-    // If message is complete and is content type, reset sending state
-    if (message.is_complete && message.message_type === "content") {
-      this.state.isSending = false;
-      this.updateSendButtonState(doc, false);
     }
   }
 
@@ -678,7 +770,13 @@ export class ChatUIFactory {
    * Handle response complete callback
    */
   private handleResponseComplete(success: boolean, error?: string): void {
-    const doc = this.containerElement?.ownerDocument;
+    const doc = this.currentDoc;
+
+    // Reset sending state and enable send button
+    this.state.isSending = false;
+    if (doc) {
+      this.updateSendButtonState(doc, false);
+    }
 
     if (success) {
       // Show all copy buttons
@@ -712,9 +810,9 @@ export class ChatUIFactory {
    */
   private handleHistoryMessages(
     sessionId: string,
-    messages: HistoryMessage[],
+    messages: BackendMessage[],
   ): void {
-    const doc = this.containerElement?.ownerDocument;
+    const doc = this.currentDoc;
     if (!doc) {
       ztoolkit.log("No document available for rendering history messages");
       return;
@@ -745,26 +843,35 @@ export class ChatUIFactory {
       messagesContainer.innerHTML = "";
     }
 
-    // Process each history message
-    for (const historyMsg of messages) {
-      if (historyMsg.message_type === "user") {
-        // User message
-        const userMessage: UserMessage = {
-          session_id: sessionId,
-          user_query: historyMsg.content,
-        };
-        session.messages.push(userMessage);
+    // Process each history message based on role
+    for (const msg of messages) {
+      // Store message
+      session.messages.push({
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        reasoning_content: msg.reasoning_content,
+      });
 
-        const messageState: MessageRenderState = {
-          id: generateId(),
-          isCollapsed: false,
-          isStreaming: false,
-        };
-        this.messageStates.set(messageState.id, messageState);
-        this.appendUserMessage(doc, userMessage, messageState);
-      } else {
-        // Agent message with potential submessages
-        this.renderHistoryAgentMessage(doc, sessionId, historyMsg, session);
+      // Render based on role
+      if (msg.role === "user") {
+        this.renderUserMessageFromBackend(doc, {
+          id: msg.id,
+          session_id: sessionId,
+          role: "user",
+          content: msg.content,
+        });
+      } else if (msg.role === "assistant") {
+        // Render thinking if reasoning_content exists
+        if (msg.reasoning_content) {
+          this.renderThinkingMessage(doc, msg.id, msg.reasoning_content);
+        }
+        // Render content
+        if (msg.content) {
+          this.renderContentMessage(doc, msg.id, msg.content);
+        }
+      } else if (msg.role === "tool") {
+        this.renderToolMessage(doc, msg.id, msg.content);
       }
     }
 
@@ -778,120 +885,6 @@ export class ChatUIFactory {
   }
 
   /**
-   * Render history agent message with submessages
-   */
-  private renderHistoryAgentMessage(
-    doc: Document,
-    sessionId: string,
-    historyMsg: HistoryAgentMessage,
-    session: ChatSession,
-  ): void {
-    const message_id = generateId();
-
-    // Create message container
-    const messageContainer = createElement(doc, "div", {
-      classList: ["chat-message", `chat-message-${historyMsg.message_type}`],
-    });
-    messageContainer.dataset.messageId = message_id;
-
-    // Render submessages first (thinking/tool collapsible blocks)
-    if (historyMsg.submessages && historyMsg.submessages.length > 0) {
-      for (const subMsg of historyMsg.submessages) {
-        const submessage_id = generateId();
-        const subMessageState: MessageRenderState = {
-          id: submessage_id,
-          isCollapsed: false,
-          isStreaming: false,
-        };
-        this.messageStates.set(submessage_id, subMessageState);
-
-        // Create collapsible block for thinking/tool
-        const collapsible = createElement(doc, "div", {
-          classList: ["chat-collapsible"],
-        });
-        collapsible.dataset.messageId = submessage_id;
-
-        const header = createElement(doc, "div", {
-          classList: ["chat-collapsible-header"],
-        });
-
-        const toggleIcon = createElement(doc, "span", {
-          classList: ["chat-collapsible-toggle"],
-          innerHTML: "&#9660;",
-        });
-
-        const label = createElement(doc, "span", {
-          classList: ["chat-collapsible-label"],
-          textContent: subMsg.message_type.toUpperCase(),
-        });
-
-        header.appendChild(toggleIcon);
-        header.appendChild(label);
-
-        header.addEventListener("click", () =>
-          this.toggleCollapsible(doc, submessage_id),
-        );
-
-        const content = createElement(doc, "div", {
-          classList: ["chat-collapsible-content"],
-          innerHTML: renderPlainText(subMsg.content),
-        });
-
-        collapsible.appendChild(header);
-        collapsible.appendChild(content);
-
-        // Copy button for submessage
-        const copyBtn = this.createCopyButtonWithContent(doc, subMsg.content);
-        collapsible.appendChild(copyBtn);
-
-        messageContainer.appendChild(collapsible);
-      }
-    }
-
-    // Render main content
-    const contentEl = createElement(doc, "div", {
-      classList: ["chat-message-content", "chat-agent-content"],
-      innerHTML: renderMarkdown(historyMsg.content),
-    });
-    messageContainer.appendChild(contentEl);
-
-    // Copy button for main content
-    const copyBtn = this.createCopyButtonWithContent(doc, historyMsg.content);
-    messageContainer.appendChild(copyBtn);
-
-    // Store message
-    const agentMessage: StoredAgentMessage = {
-      message_id,
-      session_id: sessionId,
-      message_type: historyMsg.message_type,
-      content: historyMsg.content,
-      is_complete: true,
-      submessages: historyMsg.submessages?.map((sub: HistoryAgentMessage) => ({
-        message_id: generateId(),
-        session_id: sessionId,
-        message_type: sub.message_type,
-        content: sub.content,
-        is_complete: true,
-      })),
-    };
-    session.messages.push(agentMessage);
-
-    const messageState: MessageRenderState = {
-      id: message_id,
-      isCollapsed: false,
-      isStreaming: false,
-    };
-    this.messageStates.set(message_id, messageState);
-    this.messageElements.set(message_id, messageContainer);
-
-    // Append to messages container
-    const messagesContainer = doc.getElementById("chat-messages");
-    if (messagesContainer) {
-      messagesContainer.appendChild(messageContainer);
-    }
-  }
-
-  /**
    * Update existing agent message content (streaming)
    */
   private updateAgentMessage(
@@ -902,11 +895,10 @@ export class ChatUIFactory {
     // Update stored message in session
     if (this.state.currentSession) {
       const storedMsg = this.state.currentSession.messages.find(
-        (m) => "message_id" in m && m.message_id === message.message_id,
+        (m) => m.id === message.message_id,
       );
-      if (storedMsg && "content" in storedMsg) {
+      if (storedMsg) {
         storedMsg.content = message.content;
-        storedMsg.is_complete = message.is_complete;
       }
     }
 
@@ -917,12 +909,13 @@ export class ChatUIFactory {
     if (isCollapsible) {
       const contentEl = element.querySelector(".chat-collapsible-content");
       if (contentEl) {
-        contentEl.innerHTML = renderPlainText(message.content);
+        contentEl.textContent = message.content;
       }
     } else {
       const contentEl = element.querySelector(".chat-agent-content");
       if (contentEl) {
         contentEl.innerHTML = renderMarkdown(message.content);
+        // contentEl.textContent = renderMarkdown(message.content);
       }
     }
 
@@ -998,11 +991,151 @@ export class ChatUIFactory {
     fileInput.onchange = async (ev: Event) => {
       const files = (ev.target as HTMLInputElement).files;
       if (files) {
-        await this.handleFiles(doc, files);
+        for (const file of files) {
+          // Get file path from file object
+          const filePath = (file as any).path || (file as any).mozFullPath;
+          if (filePath) {
+            this.addFileAttachment(filePath, doc);
+          } else {
+            // Fallback: show error if path not available
+            new ztoolkit.ProgressWindow(addon.data.config.addonName)
+              .createLine({
+                text: `❌ Could not get path for ${file.name}`,
+                type: "fail",
+                progress: 100,
+              })
+              .show(2000);
+          }
+        }
       }
     };
 
     fileInput.click();
+  }
+
+  /**
+   * Add file attachment by absolute path
+   * @param filePath - Absolute file path
+   * @param doc - Document for UI update
+   */
+  private addFileAttachment(filePath: string, doc: Document): void {
+    // Get file name from path
+    const fileName = filePath.split(/[/\\]/).pop() || "Unknown";
+
+    // Get file size
+    let fileSize = 0;
+    try {
+      const file = Zotero.File.pathToFile(filePath);
+      fileSize = file.exists() ? file.fileSize : 0;
+    } catch (e) {
+      ztoolkit.log("Could not get file size", e);
+    }
+
+    // Determine file type
+    const ext = fileName.split(".").pop()?.toLowerCase() || "";
+    const mimeType =
+      ext === "pdf"
+        ? "application/pdf"
+        : ext === "doc" || ext === "docx"
+          ? "application/msword"
+          : ext === "txt"
+            ? "text/plain"
+            : "application/octet-stream";
+
+    // Add as attachment
+    const fileAttachment: FileAttachment = {
+      name: fileName,
+      type: mimeType,
+      size: fileSize,
+      path: filePath,
+    };
+
+    this.state.attachments.push(fileAttachment);
+    this.updateAttachmentsDisplay(doc);
+
+    new ztoolkit.ProgressWindow(addon.data.config.addonName)
+      .createLine({
+        text: `✅ File added: ${fileName}`,
+        type: "success",
+        progress: 100,
+      })
+      .show(2000);
+  }
+
+  /**
+   * Handle reference button click - get current item's PDF path
+   */
+  private handleReferenceClick(doc: Document): void {
+    // Get current selected item using Zotero's active window
+    const win = Zotero.getMainWindow();
+    if (!win) {
+      new ztoolkit.ProgressWindow(addon.data.config.addonName)
+        .createLine({
+          text: "❌ Zotero window not available!",
+          type: "fail",
+          progress: 100,
+        })
+        .show(2000);
+      return;
+    }
+
+    const items = win.ZoteroPane?.getSelectedItems();
+    const item = items?.[0];
+
+    if (!item) {
+      new ztoolkit.ProgressWindow(addon.data.config.addonName)
+        .createLine({
+          text: "❌ No item selected!",
+          type: "fail",
+          progress: 100,
+        })
+        .show(2000);
+      return;
+    }
+
+    // Check if item has attachments
+    const attachments = item.getAttachments();
+    if (!attachments || attachments.length === 0) {
+      new ztoolkit.ProgressWindow(addon.data.config.addonName)
+        .createLine({
+          text: "❌ No PDF attachment found!",
+          type: "fail",
+          progress: 100,
+        })
+        .show(2000);
+      return;
+    }
+
+    // Get the first PDF attachment
+    const attachmentId = attachments[0];
+    const attachment = Zotero.Items.get(attachmentId);
+
+    if (!attachment || !attachment.isPDFAttachment()) {
+      new ztoolkit.ProgressWindow(addon.data.config.addonName)
+        .createLine({
+          text: "❌ Selected attachment is not a PDF!",
+          type: "fail",
+          progress: 100,
+        })
+        .show(2000);
+      return;
+    }
+
+    // Get file path
+    const filePath = attachment.getFilePath();
+    if (!filePath) {
+      new ztoolkit.ProgressWindow(addon.data.config.addonName)
+        .createLine({
+          text: "❌ Could not get file path!",
+          type: "fail",
+          progress: 100,
+        })
+        .show(2000);
+      return;
+    }
+
+    // Add file attachment
+    this.addFileAttachment(filePath, doc);
   }
 
   /**
@@ -1012,7 +1145,7 @@ export class ChatUIFactory {
     const textarea = doc.getElementById("chat-input");
     if (!textarea) return;
 
-    textarea.addEventListener("paste", async (ev: Event) => {
+    textarea.addEventListener("paste", (ev: Event) => {
       const pasteEvent = ev as ClipboardEvent;
       const items = pasteEvent.clipboardData?.items;
 
@@ -1022,49 +1155,14 @@ export class ChatUIFactory {
         if (item.kind === "file") {
           const file = item.getAsFile();
           if (file) {
-            await this.handleFiles(doc, [file]);
+            // Get file path from file object
+            const filePath = (file as any).path || (file as any).mozFullPath;
+            if (filePath) {
+              this.addFileAttachment(filePath, doc);
+            }
           }
         }
       }
-    });
-  }
-
-  /**
-   * Handle files from upload or paste
-   */
-  private async handleFiles(
-    doc: Document,
-    files: FileList | File[],
-  ): Promise<void> {
-    for (const file of files) {
-      const attachment: FileAttachment = {
-        name: file.name,
-        type: file.type,
-        size: file.size,
-      };
-
-      // Read file data
-      try {
-        attachment.data = await this.readFileAsArrayBuffer(file);
-      } catch (e) {
-        ztoolkit.log("Failed to read file", e);
-      }
-
-      this.state.attachments.push(attachment);
-    }
-
-    this.updateAttachmentsDisplay(doc);
-  }
-
-  /**
-   * Read file as ArrayBuffer
-   */
-  private readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as ArrayBuffer);
-      reader.onerror = reject;
-      reader.readAsArrayBuffer(file);
     });
   }
 
@@ -1082,9 +1180,13 @@ export class ChatUIFactory {
         classList: ["chat-attachment-item"],
       });
 
-      const nameEl = createElement(doc, "span", {
-        innerHTML: `&#128196; ${att.name} (${this.formatFileSize(att.size)})`,
-      });
+      // Display differently for path-based vs data-based attachments
+      const displayInfo = att.path
+        ? `&#128196; ${att.name} [PDF]`
+        : `&#128196; ${att.name} (${this.formatFileSize(att.size)})`;
+
+      const nameEl = createElement(doc, "span");
+      nameEl.innerHTML = displayInfo;
 
       const removeBtn = createElement(doc, "button", {
         classList: ["chat-attachment-remove"],
@@ -1127,19 +1229,19 @@ export class ChatUIFactory {
   private connectWebSocket(): void {
     const wsUrl = "ws://localhost:8005/ws";
 
-    if (this.websocket) {
+    if (addon.api.websocket) {
       ztoolkit.log("WebSocket already connected");
       return;
     }
 
     try {
-      this.websocket = new WebSocket(wsUrl);
+      addon.api.websocket = new WebSocket(wsUrl);
 
-      this.websocket.addEventListener("open", () => {
+      addon.api.websocket.addEventListener("open", () => {
         ztoolkit.log("WebSocket connected to", wsUrl);
       });
 
-      this.websocket.addEventListener(
+      addon.api.websocket.addEventListener(
         "message",
         async (event: MessageEvent) => {
           ztoolkit.log("WebSocket message received:", event.data);
@@ -1155,10 +1257,17 @@ export class ChatUIFactory {
 
           // Parse JSON message
           try {
-            const response: WSResponse = JSON.parse(data);
-            console.log(response);
+            const parsed = JSON.parse(data);
+            console.log(parsed);
 
-            this.handleWebSocketResponse(response);
+            // Check if it's a response with type field or a chat message
+            if (parsed.type) {
+              // It's a WSResponse
+              this.handleWebSocketResponse(parsed as WSResponse);
+            } else {
+              // It's a chat message (WSChatMessage)
+              this.handleChatMessage(parsed as WSChatMessage);
+            }
           } catch {
             // Not JSON, treat as plain text chat response
             const message: AgentMessage = {
@@ -1173,13 +1282,13 @@ export class ChatUIFactory {
         },
       );
 
-      this.websocket.addEventListener("error", (error: Event) => {
+      addon.api.websocket.addEventListener("error", (error: Event) => {
         ztoolkit.log("WebSocket error:", error);
       });
 
-      this.websocket.addEventListener("close", () => {
+      addon.api.websocket.addEventListener("close", () => {
         ztoolkit.log("WebSocket closed");
-        this.websocket = null;
+        addon.api.websocket = null;
         // Try to reconnect after 5 seconds
         setTimeout(() => {
           this.connectWebSocket();
@@ -1191,69 +1300,369 @@ export class ChatUIFactory {
   }
 
   /**
-   * Handle WebSocket response based on message type
+   * Handle WebSocket response (get_sessions_response, get_history_response)
    */
   private handleWebSocketResponse(response: WSResponse): void {
     switch (response.type) {
-      case "chat_response":
-        // Single chat response
-        if (response.message_type && response.content) {
-          const message: AgentMessage = {
-            message_id: response.message_id || generateId(),
-            session_id: response.session_id,
-            message_type: response.message_type,
-            content: response.content,
-            is_complete: response.is_complete ?? true,
-          };
-          this.handleAgentMessage(message);
+      case "get_sessions_response":
+        // Sessions list response
+        if (response.session_ids) {
+          this.handleSessionsResponse(response.session_ids);
         }
         break;
 
-      case "streaming":
-        // Streaming message chunk
-        if (response.message_type && response.content) {
-          const message: AgentMessage = {
-            message_id: response.message_id || generateId(),
-            session_id: response.session_id,
-            message_type: response.message_type,
-            content: response.content,
-            is_complete: false,
-          };
-          this.handleAgentMessage(message);
-        }
-        break;
-
-      case "complete":
-        // Message complete signal
-        this.handleResponseComplete(true);
-        break;
-
-      case "history_response":
+      case "get_history_response":
         // History messages response
         if (response.messages && response.session_id) {
           this.handleHistoryMessages(response.session_id, response.messages);
         }
         break;
 
-      case "sessions_response":
-        // Sessions list response
-        if (response.sessions) {
-          this.handleSessionsResponse(response.sessions);
-        }
-        break;
-
       default:
-        // Unknown type, try to handle as chat response
-        if (response.content) {
-          const message: AgentMessage = {
-            message_id: response.message_id || generateId(),
-            session_id: response.session_id,
-            message_type: response.message_type || "content",
-            content: response.content,
-            is_complete: response.is_complete ?? true,
-          };
-          this.handleAgentMessage(message);
+        ztoolkit.log("Unknown response type:", response.type);
+    }
+  }
+
+  /**
+   * Handle chat message from WebSocket (supports streaming - incremental append)
+   * role: user, assistant, tool
+   * assistant with reasoning_content -> thinking (collapsed)
+   * assistant with content -> content (not collapsed)
+   * tool -> tool (collapsed)
+   */
+  private handleChatMessage(msg: WSChatMessage): void {
+    const doc = this.currentDoc;
+    if (!doc) {
+      ztoolkit.log("No document available");
+      return;
+    }
+
+    // Debug: log received message structure
+    ztoolkit.log(
+      "handleChatMessage received:",
+      "id:",
+      msg.id,
+      "role:",
+      msg.role,
+      "content:",
+      msg.content ? `"${msg.content.substring(0, 50)}..."` : "null/empty",
+      "reasoning_content:",
+      msg.reasoning_content
+        ? `"${msg.reasoning_content.substring(0, 50)}..."`
+        : "null/empty",
+    );
+
+    // Store/update message (incremental append for streaming)
+    if (
+      this.state.currentSession &&
+      msg.session_id === this.state.currentSession.session_id
+    ) {
+      // Find existing message by id
+      const existingMsg = this.state.currentSession.messages.find(
+        (m) => m.id === msg.id,
+      );
+      if (existingMsg) {
+        // Incremental append: append new content to existing
+        if (msg.content) {
+          existingMsg.content += msg.content;
         }
+        if (msg.reasoning_content) {
+          existingMsg.reasoning_content =
+            (existingMsg.reasoning_content || "") + msg.reasoning_content;
+        }
+      } else {
+        // New message
+        const storedMsg: StoredMessage = {
+          id: msg.id,
+          role: msg.role,
+          content: msg.content || "",
+          reasoning_content: msg.reasoning_content || "",
+        };
+        this.state.currentSession.messages.push(storedMsg);
+      }
+    }
+
+    // Get the stored message for rendering (contains accumulated content)
+    const storedMsg = this.state.currentSession?.messages.find(
+      (m) => m.id === msg.id,
+    );
+
+    // Render based on role (re-render with accumulated content)
+    if (msg.role === "user") {
+      // User message - check if already exists (user messages are usually complete)
+      const existingEl = doc.querySelector(`[data-message-id="${msg.id}"]`);
+      if (!existingEl) {
+        this.renderUserMessageFromBackend(doc, msg);
+      }
+    } else if (msg.role === "assistant") {
+      // Assistant message - handle thinking and content separately
+
+      // Render thinking if reasoning_content exists and has content
+      if (storedMsg?.reasoning_content?.trim()) {
+        const thinkingId = `${msg.id}-thinking`;
+        const existingThinkingEl = doc.querySelector(
+          `[data-message-id="${thinkingId}"]`,
+        );
+        if (existingThinkingEl) {
+          // Re-render with accumulated content
+          const contentEl = existingThinkingEl.querySelector(
+            ".chat-collapsible-content",
+          );
+          if (contentEl) {
+            contentEl.textContent = storedMsg.reasoning_content;
+          }
+        } else {
+          // Create new thinking message with accumulated content
+          this.renderThinkingMessage(doc, msg.id, storedMsg.reasoning_content);
+        }
+      }
+
+      // Render content if exists and has content
+      if (storedMsg?.content?.trim()) {
+        const existingContentEl = doc.querySelector(
+          `[data-message-id="${msg.id}"].chat-message-content`,
+        );
+        if (existingContentEl) {
+          // Re-render with accumulated content
+          const contentEl = existingContentEl.querySelector(
+            ".chat-agent-content",
+          );
+          if (contentEl) {
+            // contentEl.innerHTML = renderMarkdown(storedMsg.content);
+            contentEl.textContent = storedMsg.content;
+          }
+        } else {
+          // Create new content message with accumulated content
+          this.renderContentMessage(doc, msg.id, storedMsg.content);
+        }
+      }
+
+      // Scroll to bottom
+      const messagesContainer = doc.getElementById("chat-messages");
+      if (messagesContainer) {
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }
+    } else if (msg.role === "tool") {
+      // Tool message - re-render with accumulated content
+      const existingEl = doc.querySelector(`[data-message-id="${msg.id}"]`);
+      if (existingEl && storedMsg?.content) {
+        // Re-render with accumulated content
+        const contentEl = existingEl.querySelector(".chat-collapsible-content");
+        if (contentEl) {
+          contentEl.textContent = storedMsg.content;
+        }
+      } else if (!existingEl && storedMsg?.content) {
+        // Create new tool message with accumulated content
+        this.renderToolMessage(doc, msg.id, storedMsg.content);
+      }
+
+      // Scroll to bottom
+      const messagesContainer = doc.getElementById("chat-messages");
+      if (messagesContainer) {
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }
+    }
+
+    // Handle finish signal - response complete
+    if (msg.finish === true) {
+      this.handleResponseComplete(true);
+    }
+  }
+
+  /**
+   * Render user message from backend
+   */
+  private renderUserMessageFromBackend(
+    doc: Document,
+    msg: WSChatMessage,
+  ): void {
+    const messageContainer = createElement(doc, "div", {
+      classList: ["chat-message", "chat-message-user"],
+    });
+    messageContainer.dataset.messageId = msg.id;
+
+    const contentEl = createElement(doc, "div", {
+      classList: ["chat-message-content", "chat-user-content"],
+    });
+    contentEl.textContent = msg.content;
+    messageContainer.appendChild(contentEl);
+
+    // Copy button
+    const copyBtn = this.createCopyButtonWithContent(doc, msg.content);
+    messageContainer.appendChild(copyBtn);
+
+    const messagesContainer = doc.getElementById("chat-messages");
+    if (messagesContainer) {
+      messagesContainer.appendChild(messageContainer);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+  }
+
+  /**
+   * Render thinking message (assistant's reasoning_content) - collapsed
+   */
+  private renderThinkingMessage(
+    doc: Document,
+    messageId: string,
+    reasoningContent: string,
+  ): void {
+    const messageContainer = createElement(doc, "div", {
+      classList: ["chat-message", "chat-message-thinking"],
+    });
+    const thinkingId = `${messageId}-thinking`;
+    messageContainer.dataset.messageId = thinkingId;
+
+    // Collapsible block
+    const collapsible = createElement(doc, "div", {
+      classList: ["chat-collapsible"],
+    });
+    collapsible.dataset.messageId = thinkingId;
+
+    const header = createElement(doc, "div", {
+      classList: ["chat-collapsible-header"],
+    });
+
+    const toggleIcon = createElement(doc, "span", {
+      classList: ["chat-collapsible-toggle"],
+      innerHTML: "&#9660;",
+    });
+
+    const label = createElement(doc, "span", {
+      classList: ["chat-collapsible-label"],
+      textContent: "THINKING",
+    });
+
+    header.appendChild(toggleIcon);
+    header.appendChild(label);
+
+    const messageState: MessageRenderState = {
+      id: thinkingId,
+      isCollapsed: false,
+      isStreaming: false,
+    };
+    this.messageStates.set(thinkingId, messageState);
+
+    header.addEventListener("click", () =>
+      this.toggleCollapsible(doc, thinkingId),
+    );
+
+    const content = createElement(doc, "div", {
+      classList: ["chat-collapsible-content"],
+    });
+    content.textContent = reasoningContent;
+
+    collapsible.appendChild(header);
+    collapsible.appendChild(content);
+
+    // Copy button - dynamically gets content from storedMsg
+    const copyBtn = this.createCopyButtonForThinking(doc, messageId);
+    collapsible.appendChild(copyBtn);
+
+    messageContainer.appendChild(collapsible);
+
+    const messagesContainer = doc.getElementById("chat-messages");
+    if (messagesContainer) {
+      messagesContainer.appendChild(messageContainer);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+  }
+
+  /**
+   * Render content message (assistant's content) - not collapsed
+   */
+  private renderContentMessage(
+    doc: Document,
+    messageId: string,
+    content: string,
+  ): void {
+    const messageContainer = createElement(doc, "div", {
+      classList: ["chat-message", "chat-message-content"],
+    });
+    messageContainer.dataset.messageId = messageId;
+
+    const contentEl = createElement(doc, "div", {
+      classList: ["chat-message-content", "chat-agent-content"],
+      // innerHTML: renderMarkdown(content),
+    });
+    contentEl.textContent = content;
+    messageContainer.appendChild(contentEl);
+
+    // Copy button
+    const copyBtn = this.createCopyButtonWithContent(doc, content);
+    messageContainer.appendChild(copyBtn);
+
+    const messagesContainer = doc.getElementById("chat-messages");
+    if (messagesContainer) {
+      messagesContainer.appendChild(messageContainer);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+  }
+
+  /**
+   * Render tool message - collapsed
+   */
+  private renderToolMessage(
+    doc: Document,
+    messageId: string,
+    content: string,
+  ): void {
+    const messageContainer = createElement(doc, "div", {
+      classList: ["chat-message", "chat-message-tool"],
+    });
+    messageContainer.dataset.messageId = messageId;
+
+    // Collapsible block
+    const collapsible = createElement(doc, "div", {
+      classList: ["chat-collapsible"],
+    });
+    collapsible.dataset.messageId = messageId;
+
+    const header = createElement(doc, "div", {
+      classList: ["chat-collapsible-header"],
+    });
+
+    const toggleIcon = createElement(doc, "span", {
+      classList: ["chat-collapsible-toggle"],
+      innerHTML: "&#9660;",
+    });
+
+    const label = createElement(doc, "span", {
+      classList: ["chat-collapsible-label"],
+      textContent: "TOOL",
+    });
+
+    header.appendChild(toggleIcon);
+    header.appendChild(label);
+
+    const messageState: MessageRenderState = {
+      id: messageId,
+      isCollapsed: false,
+      isStreaming: false,
+    };
+    this.messageStates.set(messageId, messageState);
+
+    header.addEventListener("click", () =>
+      this.toggleCollapsible(doc, messageId),
+    );
+
+    const contentEl = createElement(doc, "div", {
+      classList: ["chat-collapsible-content"],
+    });
+    contentEl.textContent = content;
+
+    collapsible.appendChild(header);
+    collapsible.appendChild(contentEl);
+
+    // Copy button - dynamically gets content from storedMsg
+    const copyBtn = this.createCopyButtonForTool(doc, messageId);
+    collapsible.appendChild(copyBtn);
+
+    messageContainer.appendChild(collapsible);
+
+    const messagesContainer = doc.getElementById("chat-messages");
+    if (messagesContainer) {
+      messagesContainer.appendChild(messageContainer);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
   }
 
@@ -1261,7 +1670,10 @@ export class ChatUIFactory {
    * Request history messages from WebSocket
    */
   requestHistory(sessionId: string): void {
-    if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
+    if (
+      !addon.api.websocket ||
+      addon.api.websocket.readyState !== WebSocket.OPEN
+    ) {
       ztoolkit.log("WebSocket not connected, cannot request history");
       return;
     }
@@ -1270,7 +1682,7 @@ export class ChatUIFactory {
       type: "get_history",
       session_id: sessionId,
     };
-    this.websocket.send(JSON.stringify(request));
+    addon.api.websocket.send(JSON.stringify(request));
     ztoolkit.log("Requested history for session:", sessionId);
   }
 
@@ -1278,7 +1690,10 @@ export class ChatUIFactory {
    * Request sessions list from WebSocket
    */
   requestSessions(): void {
-    if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
+    if (
+      !addon.api.websocket ||
+      addon.api.websocket.readyState !== WebSocket.OPEN
+    ) {
       ztoolkit.log("WebSocket not connected, cannot request sessions");
       return;
     }
@@ -1286,28 +1701,29 @@ export class ChatUIFactory {
     const request: WSRequest = {
       type: "get_sessions",
     };
-    this.websocket.send(JSON.stringify(request));
+    addon.api.websocket.send(JSON.stringify(request));
     ztoolkit.log("Requested sessions list");
   }
 
   /**
    * Handle sessions list response from WebSocket
    */
-  private handleSessionsResponse(sessions: SessionInfo[]): void {
-    ztoolkit.log("Received sessions list:", sessions);
-    this.state.sessions = sessions.map((info) => ({
-      session_id: info.session_id,
+  private handleSessionsResponse(sessionIds: string[]): void {
+    ztoolkit.log("Received sessions list:", sessionIds);
+    this.state.sessions = sessionIds.map((sessionId) => ({
+      session_id: sessionId,
       messages: [],
-      created_at: info.created_at ? new Date(info.created_at) : new Date(),
+      created_at: new Date(),
     }));
   }
 
   /**
-   * Create new chat session
+   * Create new chat session - uses session_id from prefs
    */
   private createNewSession(): void {
+    const sessionId = getOrCreateSessionId();
     const session: ChatSession = {
-      session_id: generateSessionId(),
+      session_id: sessionId,
       messages: [],
       created_at: new Date(),
     };
