@@ -39,6 +39,7 @@ export interface WSRequest {
   type: WSRequestType;
   session_id?: string;
   message?: string;  // For chat request
+  attachments?: FileAttachment[];  // File attachments (paths)
 }
 
 /**

@@ -677,7 +677,7 @@ export class ChatUIFactory {
   }
 
   /**
-   * Send message via WebSocket
+   * Send message via WebSocket (includes file attachments)
    */
   private sendWebSocketMessage(userMessage: UserMessage): void {
     if (
@@ -701,11 +701,19 @@ export class ChatUIFactory {
       return;
     }
 
+    // Build request with attachments (only file paths)
     const request: WSRequest = {
       type: "chat",
       session_id: userMessage.session_id,
       message: userMessage.user_query,
+      attachments: userMessage.attachments?.map((att) => ({
+        name: att.name,
+        type: att.type,
+        size: att.size,
+        path: att.path,
+      })),
     };
+
     addon.api.websocket.send(JSON.stringify(request));
     ztoolkit.log("Sent chat request via WebSocket:", request);
   }
