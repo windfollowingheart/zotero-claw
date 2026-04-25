@@ -5,10 +5,7 @@
  * All communication is now handled via WebSocket in ui.ts.
  */
 
-import type {
-  AgentMessage,
-  BackendMessage,
-} from "./types";
+import type { AgentMessage, BackendMessage } from "./types";
 
 /**
  * Agent message callback type

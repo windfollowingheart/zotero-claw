@@ -5,22 +5,22 @@
 /**
  * WebSocket request types - sent from client to backend
  */
-export type WSRequestType = 'chat' | 'get_history' | 'get_sessions';
+export type WSRequestType = "chat" | "get_history" | "get_sessions";
 
 /**
  * WebSocket response types - received from backend
  */
-export type WSResponseType = 'get_sessions_response' | 'get_history_response';
+export type WSResponseType = "get_sessions_response" | "get_history_response";
 
 /**
  * Message role types - from backend
  */
-export type MessageRole = 'user' | 'assistant' | 'tool';
+export type MessageRole = "user" | "assistant" | "tool";
 
 /**
  * UI message types - for rendering
  */
-export type UIMessageType = 'user' | 'thinking' | 'content' | 'tool';
+export type UIMessageType = "user" | "thinking" | "content" | "tool";
 
 /**
  * File attachment structure - uses absolute file path
@@ -29,7 +29,7 @@ export interface FileAttachment {
   name: string;
   type: string;
   size: number;
-  path: string;  // Absolute file path
+  path: string; // Absolute file path
 }
 
 /**
@@ -38,8 +38,8 @@ export interface FileAttachment {
 export interface WSRequest {
   type: WSRequestType;
   session_id?: string;
-  message?: string;  // For chat request
-  attachments?: FileAttachment[];  // File attachments (paths)
+  message?: string; // For chat request
+  attachments?: FileAttachment[]; // File attachments (paths)
 }
 
 /**
@@ -51,7 +51,7 @@ export interface WSChatMessage {
   role: MessageRole;
   content: string;
   reasoning_content?: string | null;
-  finish?: boolean;  // True indicates response is complete
+  finish?: boolean; // True indicates response is complete
   files?: BackendFile[];
 }
 
@@ -61,8 +61,8 @@ export interface WSChatMessage {
 export interface WSResponse {
   type: WSResponseType;
   session_id?: string;
-  session_ids?: string[];         // For get_sessions_response
-  messages?: BackendMessage[];    // For get_history_response
+  session_ids?: string[]; // For get_sessions_response
+  messages?: BackendMessage[]; // For get_history_response
 }
 
 /**

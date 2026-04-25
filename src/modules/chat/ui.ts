@@ -1037,7 +1037,7 @@ export class ChatUIFactory {
         text: `✅  Loaded ${messages.length} messages`,
         progress: 100,
       })
-      .show();
+      .show(2000);
   }
 
   /**
@@ -1431,9 +1431,18 @@ export class ChatUIFactory {
       addon.api.websocket.readyState === WebSocket.OPEN
     ) {
       // Already connected, disconnect
-      addon.api.websocket.close();
+      // Mark as intentional disconnect before closing
+      const ws = addon.api.websocket;
       addon.api.websocket = null;
+      ws.close();
       this.updateConnectionStatus("disconnected");
+      new ztoolkit.ProgressWindow(addon.data.config.addonName)
+        .createLine({
+          type: "success",
+          text: "✅ WebSocket disconnected",
+          progress: 100,
+        })
+        .show(2000);
     } else {
       // Not connected, wait 1s before reconnecting to avoid rapid reconnection
       this.updateConnectionStatus("connecting");
@@ -1474,9 +1483,10 @@ export class ChatUIFactory {
         new ztoolkit.ProgressWindow(addon.data.config.addonName)
           .createLine({
             type: "success",
-            text: "WebSocket connected",
+            text: "✅ WebSocket connected",
+            progress: 100,
           })
-          .show();
+          .show(2000);
         // Request history on first connection
         const sessionId = getOrCreateSessionId();
         this.requestHistory(sessionId);
@@ -1525,27 +1535,34 @@ export class ChatUIFactory {
 
       addon.api.websocket.addEventListener("error", (error: Event) => {
         ztoolkit.log("WebSocket error:", error);
-        this.updateConnectionStatus("disconnected");
-        new ztoolkit.ProgressWindow(addon.data.config.addonName)
-          .createLine({
-            type: "error",
-            text: "❌ WebSocket connection failed",
-            progress: 100,
-          })
-          .show(2000);
+        // Check if this was intentional disconnect
+        if (addon.api.websocket !== null) {
+          this.updateConnectionStatus("disconnected");
+          new ztoolkit.ProgressWindow(addon.data.config.addonName)
+            .createLine({
+              type: "error",
+              text: "❌ WebSocket connection failed",
+              progress: 100,
+            })
+            .show(2000);
+        }
       });
 
       addon.api.websocket.addEventListener("close", () => {
         ztoolkit.log("WebSocket closed");
-        addon.api.websocket = null;
-        this.updateConnectionStatus("disconnected");
-        new ztoolkit.ProgressWindow(addon.data.config.addonName)
-          .createLine({
-            type: "error",
-            text: "❌ WebSocket disconnected",
-            progress: 100,
-          })
-          .show(2000);
+        // Check if this was an intentional disconnect
+        // If addon.api.websocket is null, we already handled it in handleConnectClick
+        if (addon.api.websocket !== null) {
+          addon.api.websocket = null;
+          this.updateConnectionStatus("disconnected");
+          new ztoolkit.ProgressWindow(addon.data.config.addonName)
+            .createLine({
+              type: "error",
+              text: "❌ WebSocket disconnected unexpectedly",
+              progress: 100,
+            })
+            .show(2000);
+        }
       });
     } catch (error) {
       ztoolkit.log("Failed to connect WebSocket:", error);

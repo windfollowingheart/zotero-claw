@@ -9,13 +9,9 @@
 
 - [github](https://github.com/windfollowingheart/zotero-copy-anything/releases/download/v1.0.4/zotero-copy-anything.xpi)
 
-
 # How to use?
 
-
 # Features
-
-
 
 # Thanks
 
