@@ -15,6 +15,52 @@
   /* background: var(--material-background, #f5f5f5); */
 }
 
+/* Connection status bar */
+.chat-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 4px 8px;
+  /* border-bottom: 1px solid var(--fill-quinary, #e0e0e0); */
+  /* background: var(--material-toolbar, #f5f5f5); */
+}
+
+.chat-status-indicator {
+  font-size: 0.85em;
+  font-weight: 500;
+}
+
+.chat-status-indicator.connected {
+  color: #28a745;
+}
+
+.chat-status-indicator.disconnected {
+  color: #dc3545;
+}
+
+.chat-status-indicator.connecting {
+  color: #007bff;
+}
+
+.chat-connect-btn {
+  padding: 2px 8px;
+  font-size: 0.8em;
+  background: transparent;
+  /* border: 1px solid var(--material-border, #ccc); */
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.chat-connect-btn:hover {
+  /* background: var(--material-button-hover, #e8e8e8); */
+}
+
+.chat-connect-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Messages container */
 .chat-messages {
   flex: 1;

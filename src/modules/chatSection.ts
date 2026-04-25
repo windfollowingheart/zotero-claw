@@ -54,17 +54,23 @@ export class ChatSectionFactory {
         const doc = body.ownerDocument as Document;
         const itemID = item.id;
         console.log("onItemChange", itemID);
-        // Clear existing content in body
-        body.innerHTML = "";
 
-        // Re-render chat panel with new doc
+        // Update current doc
+        ChatSectionFactory.chatUI?.setCurrentDoc(doc);
+
+        // Get or create global container (singleton)
         const chatPanel = ChatSectionFactory.chatUI?.createChatPanel(
           doc,
         ) as HTMLElement;
-        body.appendChild(chatPanel);
-        ChatSectionFactory.chatUI?.setCurrentDoc(
-          chatPanel.ownerDocument as Document,
-        );
+
+        // Check if container is already in this body
+        if (!body.contains(chatPanel)) {
+          console.log("Appending global container to body");
+          body.appendChild(chatPanel);
+        } else {
+          console.log("Container already in body");
+        }
+
         // Request history for current session
         ChatSectionFactory.chatUI?.requestHistory(
           ChatSectionFactory.chatUI?.getState().currentSession?.session_id ||

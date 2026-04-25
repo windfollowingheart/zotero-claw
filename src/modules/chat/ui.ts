@@ -145,21 +145,62 @@ export class ChatUIFactory {
   }
 
   /**
-   * Create the main chat panel UI
-   * Called each time item changes - recreates all UI elements
+   * Create the main chat panel UI (singleton mode)
+   * Returns global container from addon.data.chatSectionContainer
+   * Only creates once, subsequent calls return existing container
    */
   createChatPanel(doc: Document): HTMLElement {
     // Update current doc reference
     this.currentDoc = doc;
 
-    // Clear message states and elements for fresh render
-    this.messageStates.clear();
-    this.messageElements.clear();
+    // Check if global container already exists
+    if (addon.data.chatSectionContainer) {
+      ztoolkit.log("Global container exists, returning it");
+      this.containerElement = addon.data.chatSectionContainer;
+      // Update connection status based on current WebSocket state
+      if (addon.api.websocket) {
+        if (addon.api.websocket.readyState === WebSocket.OPEN) {
+          this.updateConnectionStatus("connected");
+        } else if (addon.api.websocket.readyState === WebSocket.CONNECTING) {
+          this.updateConnectionStatus("connecting");
+        } else {
+          this.updateConnectionStatus("disconnected");
+        }
+      } else {
+        this.updateConnectionStatus("disconnected");
+      }
+      return addon.data.chatSectionContainer;
+    }
+
+    // Create new container (only once)
+    ztoolkit.log("Creating new global container");
 
     const container = createElement(doc, "div", {
       id: "chat-container",
       classList: ["chat-container"],
     });
+
+    // Connection status bar
+    const statusBar = createElement(doc, "div", {
+      id: "chat-status-bar",
+      classList: ["chat-status-bar"],
+    });
+
+    const statusIndicator = createElement(doc, "span", {
+      id: "chat-status-indicator",
+      classList: ["chat-status-indicator", "disconnected"],
+      textContent: "● Disconnected",
+    });
+
+    const connectBtn = createElement(doc, "button", {
+      id: "chat-connect-btn",
+      classList: ["chat-connect-btn"],
+      textContent: "Connect",
+    });
+    connectBtn.addEventListener("click", () => this.handleConnectClick(doc));
+
+    statusBar.appendChild(statusIndicator);
+    statusBar.appendChild(connectBtn);
 
     // Messages container
     const messagesContainer = createElement(doc, "div", {
@@ -170,9 +211,12 @@ export class ChatUIFactory {
     // Input area
     const inputArea = this.createInputArea(doc);
 
+    container.appendChild(statusBar);
     container.appendChild(messagesContainer);
     container.appendChild(inputArea);
 
+    // Store as global singleton
+    addon.data.chatSectionContainer = container;
     this.containerElement = container;
 
     // Setup paste handler for file upload
@@ -182,6 +226,13 @@ export class ChatUIFactory {
     this.connectWebSocket();
 
     return container;
+  }
+
+  /**
+   * Get the container element (singleton check)
+   */
+  getContainerElement(): HTMLElement | null {
+    return this.containerElement;
   }
 
   /**
@@ -496,6 +547,29 @@ export class ChatUIFactory {
         (m) => m.id === messageId,
       );
       const content = storedMsg?.reasoning_content || "";
+      this.copyToClipboard(content);
+    });
+    return btn;
+  }
+
+  /**
+   * Create copy button for content message - gets content dynamically from storedMsg
+   */
+  private createCopyButtonForContent(
+    doc: Document,
+    messageId: string,
+  ): HTMLElement {
+    const btn = createElement(doc, "button", {
+      classList: ["chat-copy-btn"],
+      innerHTML: "&#128203; Copy",
+      properties: { title: "Copy to clipboard" },
+    });
+    btn.addEventListener("click", () => {
+      // Get content from storedMsg dynamically
+      const storedMsg = this.state.currentSession?.messages.find(
+        (m) => m.id === messageId,
+      );
+      const content = storedMsg?.content || "";
       this.copyToClipboard(content);
     });
     return btn;
@@ -1233,6 +1307,65 @@ export class ChatUIFactory {
   }
 
   /**
+   * Update connection status indicator and button
+   */
+  private updateConnectionStatus(
+    status: "connected" | "disconnected" | "connecting",
+  ): void {
+    const indicator = this.currentDoc?.getElementById("chat-status-indicator");
+    const connectBtn = this.currentDoc?.getElementById("chat-connect-btn");
+
+    if (indicator) {
+      indicator.classList.remove("connected", "disconnected", "connecting");
+      indicator.classList.add(status);
+      switch (status) {
+        case "connected":
+          indicator.textContent = "● Connected";
+          break;
+        case "disconnected":
+          indicator.textContent = "● Disconnected";
+          break;
+        case "connecting":
+          indicator.textContent = "● Connecting";
+          break;
+      }
+    }
+
+    if (connectBtn) {
+      const btn = connectBtn as HTMLButtonElement;
+      switch (status) {
+        case "connected":
+          btn.textContent = "Disconnect";
+          btn.disabled = false;
+          break;
+        case "disconnected":
+          btn.textContent = "Connect";
+          btn.disabled = false;
+          break;
+        case "connecting":
+          btn.textContent = "Connect";
+          btn.disabled = true;
+          break;
+      }
+    }
+  }
+
+  /**
+   * Handle connect button click
+   */
+  private handleConnectClick(doc: Document): void {
+    if (addon.api.websocket && addon.api.websocket.readyState === WebSocket.OPEN) {
+      // Already connected, disconnect
+      addon.api.websocket.close();
+      addon.api.websocket = null;
+      this.updateConnectionStatus("disconnected");
+    } else {
+      // Not connected, try to connect
+      this.connectWebSocket();
+    }
+  }
+
+  /**
    * Connect to WebSocket at localhost:8005/ws (auto-connect)
    */
   private connectWebSocket(): void {
@@ -1244,10 +1377,20 @@ export class ChatUIFactory {
     }
 
     try {
+      // Update status to connecting
+      this.updateConnectionStatus("connecting");
+
       addon.api.websocket = new WebSocket(wsUrl);
 
       addon.api.websocket.addEventListener("open", () => {
         ztoolkit.log("WebSocket connected to", wsUrl);
+        this.updateConnectionStatus("connected");
+        new ztoolkit.ProgressWindow(addon.data.config.addonName)
+          .createLine({
+            type: "success",
+            text: "WebSocket connected",
+          })
+          .show();
       });
 
       addon.api.websocket.addEventListener(
@@ -1293,11 +1436,25 @@ export class ChatUIFactory {
 
       addon.api.websocket.addEventListener("error", (error: Event) => {
         ztoolkit.log("WebSocket error:", error);
+        this.updateConnectionStatus("disconnected");
+        new ztoolkit.ProgressWindow(addon.data.config.addonName)
+          .createLine({
+            type: "fail",
+            text: "WebSocket connection failed",
+          })
+          .show();
       });
 
       addon.api.websocket.addEventListener("close", () => {
         ztoolkit.log("WebSocket closed");
         addon.api.websocket = null;
+        this.updateConnectionStatus("disconnected");
+        new ztoolkit.ProgressWindow(addon.data.config.addonName)
+          .createLine({
+            type: "fail",
+            text: "WebSocket disconnected",
+          })
+          .show();
         // Try to reconnect after 5 seconds
         setTimeout(() => {
           this.connectWebSocket();
@@ -1305,6 +1462,13 @@ export class ChatUIFactory {
       });
     } catch (error) {
       ztoolkit.log("Failed to connect WebSocket:", error);
+      this.updateConnectionStatus("disconnected");
+      new ztoolkit.ProgressWindow(addon.data.config.addonName)
+        .createLine({
+          type: "fail",
+          text: "WebSocket connection failed",
+        })
+        .show();
     }
   }
 
@@ -1616,8 +1780,8 @@ export class ChatUIFactory {
     });
     messageContainer.appendChild(contentEl);
 
-    // Copy button
-    const copyBtn = this.createCopyButtonWithContent(doc, content);
+    // Copy button - dynamically gets content from storedMsg
+    const copyBtn = this.createCopyButtonForContent(doc, messageId);
     messageContainer.appendChild(copyBtn);
 
     const messagesContainer = doc.getElementById("chat-messages");

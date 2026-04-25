@@ -20,6 +20,8 @@ class Addon {
       rows: Array<{ [dataKey: string]: string }>;
     };
     dialog?: DialogHelper;
+    // Global chat section container (singleton)
+    chatSectionContainer?: HTMLElement | null;
   };
   // Lifecycle hooks
   public hooks: typeof hooks;
