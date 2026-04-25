@@ -7,10 +7,14 @@
 
 </div>
 
+<div align="center">
+
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Zotero](https://img.shields.io/badge/Zotero-7.x-green.svg)](https://www.zotero.org/)
 [![Zotero](https://img.shields.io/badge/Zotero-8.x-green.svg)](https://www.zotero.org/)
 [![Zotero](https://img.shields.io/badge/Zotero-9.x-green.svg)](https://www.zotero.org/)
+
+</div>
 
 # Features
 
