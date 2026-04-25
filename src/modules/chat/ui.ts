@@ -1455,10 +1455,6 @@ export class ChatUIFactory {
             text: "WebSocket disconnected",
           })
           .show();
-        // Try to reconnect after 5 seconds
-        setTimeout(() => {
-          this.connectWebSocket();
-        }, 5000);
       });
     } catch (error) {
       ztoolkit.log("Failed to connect WebSocket:", error);
