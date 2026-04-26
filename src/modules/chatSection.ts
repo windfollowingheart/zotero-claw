@@ -102,6 +102,8 @@ export class ChatSectionFactory {
             } else {
               console.log("Container already in body");
             }
+            // Refresh state
+            ChatSectionFactory.chatUI?.refreshState();
           },
         },
       ],

@@ -114,6 +114,17 @@ export class ChatUIFactory {
     this.registerCallbacks();
   }
 
+  public refreshState(): void {
+    this.state = {
+      currentSession: null,
+      sessions: [],
+      inputValue: "",
+      attachments: [],
+      isLoading: false,
+      isSending: false,
+    };
+  }
+
   /**
    * Register API callbacks (only called once in constructor)
    */
