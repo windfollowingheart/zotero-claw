@@ -81,21 +81,29 @@ export class ChatSectionFactory {
       onRender: (params) => {},
 
       sectionButtons: [
-        // {
-        //   type: "refresh",
-        //   icon: "chrome://zotero/skin/16/universal/refresh.svg",
-        //   l10nID: "zoteroclaw-chat-section-refresh-tooltip",
-        //   onClick: (params) => {
-        //     const { body } = params;
-        //     const doc = body.ownerDocument as Document;
-        //     ChatSectionFactory.chatUI?.setCurrentDoc(doc);
-        //     // Refresh history for current session
-        //     ChatSectionFactory.chatUI?.requestHistory(
-        //       ChatSectionFactory.chatUI?.getState().currentSession
-        //         ?.session_id || "",
-        //     );
-        //   },
-        // },
+        {
+          type: "refresh",
+          icon: "chrome://zotero/skin/16/universal/refresh.svg",
+          l10nID: "zoteroclaw-chat-section-refresh-tooltip",
+          onClick: (params) => {
+            const { body } = params;
+            const doc = body.ownerDocument as Document;
+            addon.data.chatSectionContainer?.remove();
+            addon.data.chatSectionContainer = null;
+
+            const chatPanel = ChatSectionFactory.chatUI?.createChatPanel(
+              doc,
+            ) as HTMLElement;
+
+            // Check if container is already in this body
+            if (!body.contains(chatPanel)) {
+              console.log("Appending global container to body");
+              body.appendChild(chatPanel);
+            } else {
+              console.log("Container already in body");
+            }
+          },
+        },
       ],
     });
   }

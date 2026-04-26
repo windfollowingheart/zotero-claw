@@ -150,9 +150,32 @@ export class ChatUIFactory {
    * Returns global container from addon.data.chatSectionContainer
    * Only creates once, subsequent calls return existing container
    */
-  createChatPanel(doc: Document): HTMLElement {
+  createChatPanel(doc: Document, needCheckStatus: boolean = true): HTMLElement {
     // Update current doc reference
     this.currentDoc = doc;
+
+    if (needCheckStatus) {
+      setTimeout(() => {
+        console.log("addon.api.websocket", addon.api.websocket);
+        if (addon.api.websocket) {
+          console.log(
+            "addon.api.websocket.readyState",
+            addon.api.websocket.readyState,
+          );
+        }
+        if (addon.api.websocket) {
+          if (addon.api.websocket.readyState === WebSocket.OPEN) {
+            this.updateConnectionStatus("connected");
+          } else if (addon.api.websocket.readyState === WebSocket.CONNECTING) {
+            this.updateConnectionStatus("connecting");
+          } else {
+            this.updateConnectionStatus("disconnected");
+          }
+        } else {
+          this.updateConnectionStatus("disconnected");
+        }
+      }, 500);
+    }
 
     // Check if global container already exists
     if (addon.data.chatSectionContainer) {
@@ -1387,8 +1410,9 @@ export class ChatUIFactory {
   ): void {
     const indicator = this.currentDoc?.getElementById("chat-status-indicator");
     const connectBtn = this.currentDoc?.getElementById("chat-connect-btn");
-
+    console.log("indicator", indicator);
     if (indicator) {
+      console.log("status", status);
       indicator.classList.remove("connected", "disconnected", "connecting");
       indicator.classList.add(status);
       switch (status) {
@@ -1699,8 +1723,13 @@ export class ChatUIFactory {
             contentEl.textContent = storedMsg.reasoning_content;
           }
         } else {
-          // Create new thinking message with accumulated content
-          this.renderThinkingMessage(doc, msg.id, storedMsg.reasoning_content);
+          // Create new thinking message with accumulated content (expanded for streaming)
+          this.renderThinkingMessage(
+            doc,
+            msg.id,
+            storedMsg.reasoning_content,
+            false,
+          );
         }
       }
 
@@ -1738,8 +1767,8 @@ export class ChatUIFactory {
           contentEl.textContent = storedMsg.content;
         }
       } else if (!existingEl && storedMsg?.content) {
-        // Create new tool message with accumulated content
-        this.renderToolMessage(doc, msg.id, storedMsg.content);
+        // Create new tool message with accumulated content (expanded for streaming)
+        this.renderToolMessage(doc, msg.id, storedMsg.content, false);
       }
 
       // Scroll to bottom
@@ -1806,12 +1835,14 @@ export class ChatUIFactory {
   }
 
   /**
-   * Render thinking message (assistant's reasoning_content) - collapsed
+   * Render thinking message (assistant's reasoning_content)
+   * @param collapsed - true for history messages (collapsed), false for streaming (expanded)
    */
   private renderThinkingMessage(
     doc: Document,
     messageId: string,
     reasoningContent: string,
+    collapsed: boolean = true,
   ): void {
     const messageContainer = createElement(doc, "div", {
       classList: ["chat-message", "chat-message-thinking"],
@@ -1831,7 +1862,7 @@ export class ChatUIFactory {
 
     const toggleIcon = createElement(doc, "span", {
       classList: ["chat-collapsible-toggle"],
-      innerHTML: "&#9660;",
+      innerHTML: collapsed ? "&#9654;" : "&#9660;",
     });
 
     const label = createElement(doc, "span", {
@@ -1844,8 +1875,8 @@ export class ChatUIFactory {
 
     const messageState: MessageRenderState = {
       id: thinkingId,
-      isCollapsed: false,
-      isStreaming: false,
+      isCollapsed: collapsed,
+      isStreaming: !collapsed,
     };
     this.messageStates.set(thinkingId, messageState);
 
@@ -1856,6 +1887,9 @@ export class ChatUIFactory {
     const content = createElement(doc, "div", {
       classList: ["chat-collapsible-content"],
     });
+    if (collapsed) {
+      content.classList.add("collapsed");
+    }
     content.textContent = reasoningContent;
 
     collapsible.appendChild(header);
@@ -1905,12 +1939,14 @@ export class ChatUIFactory {
   }
 
   /**
-   * Render tool message - collapsed
+   * Render tool message
+   * @param collapsed - true for history messages (collapsed), false for streaming (expanded)
    */
   private renderToolMessage(
     doc: Document,
     messageId: string,
     content: string,
+    collapsed: boolean = true,
   ): void {
     const messageContainer = createElement(doc, "div", {
       classList: ["chat-message", "chat-message-tool"],
@@ -1929,7 +1965,7 @@ export class ChatUIFactory {
 
     const toggleIcon = createElement(doc, "span", {
       classList: ["chat-collapsible-toggle"],
-      innerHTML: "&#9660;",
+      innerHTML: collapsed ? "&#9654;" : "&#9660;",
     });
 
     const label = createElement(doc, "span", {
@@ -1942,8 +1978,8 @@ export class ChatUIFactory {
 
     const messageState: MessageRenderState = {
       id: messageId,
-      isCollapsed: false,
-      isStreaming: false,
+      isCollapsed: collapsed,
+      isStreaming: !collapsed,
     };
     this.messageStates.set(messageId, messageState);
 
@@ -1954,6 +1990,9 @@ export class ChatUIFactory {
     const contentEl = createElement(doc, "div", {
       classList: ["chat-collapsible-content"],
     });
+    if (collapsed) {
+      contentEl.classList.add("collapsed");
+    }
     contentEl.textContent = content;
 
     collapsible.appendChild(header);
