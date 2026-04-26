@@ -120,6 +120,12 @@ Then you can chat with ZoteroClaw about the PDF document.
   <img src="asserts/11.png" width="70%" />
 </div>
 
+if the ui is bug, you can click the Refresh button to refresh the ui.
+
+<div align="center">
+  <img src="asserts/12.png" width="70%" />
+</div>
+
 # Thanks
 
 - [Zotero Plugin Template](https://github.com/windingwind/zotero-plugin-template) - The foundation for this plugin
